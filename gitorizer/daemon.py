@@ -4,7 +4,7 @@ import signal
 import threading
 from collections.abc import Callable
 
-from gitorizer import git_ops
+from gitorizer import git_ops, status
 from gitorizer.hooks import PostChangeHook
 from gitorizer.config import AppConfig, RepoConfig
 from gitorizer.watcher import RepoWatcher
@@ -48,6 +48,7 @@ def _pull_loop(
 def run(app_config: AppConfig) -> None:
     """Main daemon entry point. Blocks until SIGINT or SIGTERM."""
     logger.info("Gitorizer starting up...")
+    status.enable(status.default_status_path(), [r.path for r in app_config.repos])
 
     # Verify git connectivity by fetching all repos at startup
     all_ok = True
@@ -116,4 +117,5 @@ def run(app_config: AppConfig) -> None:
         logger.info("Finishing pending post-change hook runs...")
         post_change_hook.stop()
 
+    status.disable()
     logger.info("Gitorizer stopped.")

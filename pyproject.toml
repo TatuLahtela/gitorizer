@@ -8,8 +8,14 @@ dependencies = [
     "watchdog",
 ]
 
+[project.optional-dependencies]
+tray = [
+    "PySide6-Essentials",
+]
+
 [project.scripts]
 gitorizer = "gitorizer.cli:main"
+gitorizer-tray = "gitorizer.tray:main"
 
 [build-system]
 requires = ["hatchling"]

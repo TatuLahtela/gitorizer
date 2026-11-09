@@ -27,6 +27,8 @@ def run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess:
 # Platform detection
 # ---------------------------------------------------------------------------
 
+INSTALL_TRAY = "--tray" in sys.argv[1:]
+
 system = platform.system()
 if system not in ("Darwin", "Linux"):
     die(f"unsupported platform: {system}")
@@ -49,7 +51,16 @@ if not uv:
 # ---------------------------------------------------------------------------
 
 repo_dir = Path(__file__).parent.resolve()
-run([uv, "tool", "install", str(repo_dir), "--force"])
+install_target = f"{repo_dir}[tray]" if INSTALL_TRAY else str(repo_dir)
+# `uv tool install` only honours .python-version when run from inside the
+# repo, so pass the pinned version explicitly (uv downloads it if needed).
+python_version_file = repo_dir / ".python-version"
+python_args = (
+    ["--python", python_version_file.read_text().strip()]
+    if python_version_file.exists()
+    else []
+)
+run([uv, "tool", "install", install_target, *python_args, "--force"])
 
 bin_path = HOME / ".local" / "bin" / "gitorizer"
 if not bin_path.exists():
@@ -153,9 +164,64 @@ elif system == "Linux":
 
     run(["systemctl", "--user", "daemon-reload"])
     run(["systemctl", "--user", "enable", "--now", "gitorizer"])
+    # enable --now leaves an already-running service on the old binary
+    run(["systemctl", "--user", "restart", "gitorizer"])
 
     print()
     print("service started. Useful commands:")
     print("  systemctl --user status gitorizer")
     print("  systemctl --user restart gitorizer")
     print("  journalctl --user -fu gitorizer")
+
+# ---------------------------------------------------------------------------
+# Optional tray indicator (python3 install.py --tray)
+# ---------------------------------------------------------------------------
+
+if INSTALL_TRAY:
+    tray_bin = HOME / ".local" / "bin" / "gitorizer-tray"
+    if not tray_bin.exists():
+        die(f"tray binary not found at {tray_bin}")
+
+    if system == "Linux":
+        autostart_dir = Path(os.environ.get("XDG_CONFIG_HOME") or HOME / ".config") / "autostart"
+        autostart_dir.mkdir(parents=True, exist_ok=True)
+        desktop_path = autostart_dir / "gitorizer-tray.desktop"
+        desktop_path.write_text(textwrap.dedent(f"""\
+            [Desktop Entry]
+            Type=Application
+            Name=Gitorizer Tray
+            Comment=Show gitorizer sync status in the system tray
+            Exec={tray_bin}
+            Icon=vcs-normal
+            Terminal=false
+            X-GNOME-Autostart-enabled=true
+        """))
+        print(f"wrote: {desktop_path}")
+        subprocess.Popen([str(tray_bin)], start_new_session=True,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        print("tray started (and will start on login).")
+
+    elif system == "Darwin":
+        tray_plist = HOME / "Library" / "LaunchAgents" / "com.gitorizer.tray.plist"
+        tray_plist.write_text(textwrap.dedent(f"""\
+            <?xml version="1.0" encoding="UTF-8"?>
+            <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+            <plist version="1.0">
+            <dict>
+                <key>Label</key>
+                <string>com.gitorizer.tray</string>
+                <key>ProgramArguments</key>
+                <array>
+                    <string>{tray_bin}</string>
+                </array>
+                <key>RunAtLoad</key>
+                <true/>
+                <key>LimitLoadToSessionType</key>
+                <string>Aqua</string>
+            </dict>
+            </plist>
+        """))
+        print(f"wrote: {tray_plist}")
+        subprocess.run(["launchctl", "unload", str(tray_plist)], capture_output=True)
+        run(["launchctl", "load", str(tray_plist)])
+        print("tray started (and will start on login).")

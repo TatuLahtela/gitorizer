@@ -12,6 +12,7 @@ Uses native filesystem events (inotify on Linux, FSEvents on macOS) for instant 
 - Periodic pull from remote (configurable per repo)
 - Optional debounced post-change hook after repository content changes
 - Single TOML config file with global defaults overridable per repository
+- Optional system tray indicator showing each repository's last sync and errors
 
 ## Installation
 
@@ -108,6 +109,32 @@ By default, gitorizer reads `$XDG_CONFIG_HOME/gitorizer/gitorizer.toml` (`XDG_CO
 | `--log-level` | `INFO` | Verbosity: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
 
 Stop the daemon with `Ctrl+C` (or `SIGTERM`). It will finish any in-progress git operation before exiting.
+
+## System tray indicator
+
+`gitorizer-tray` puts an icon in the system tray (KDE Plasma, GNOME with the
+AppIndicator extension, other StatusNotifierItem hosts, and macOS). The icon is
+green when all repositories are in sync, red when any has an error, and grey
+when the daemon is not running.
+
+Its menu lists every watched repository with the time of the last successful
+sync (commit, push, pull, or fetch) and, beneath it, the latest error for each
+failing operation. Click a repository to open its folder, or click an error to
+copy the message. An error clears once the same operation succeeds again.
+
+The tray needs PySide6, available as the `tray` extra:
+
+```bash
+python3 install.py --tray          # also starts the tray on login
+# or
+uv tool install --force './gitorizer[tray]'
+gitorizer-tray
+```
+
+The daemon and the tray share state through
+`$XDG_STATE_HOME/gitorizer/status.json` (`XDG_STATE_HOME` defaults to
+`~/.local/state`), so the tray works whether the daemon runs as a service
+or in a terminal.
 
 ## Commit message format
 
