@@ -132,6 +132,21 @@ elif system == "Linux":
     systemd_dir.mkdir(parents=True, exist_ok=True)
     service_path = systemd_dir / "gitorizer.service"
 
+    # The user manager starts the service before the desktop session imports
+    # SSH_AUTH_SOCK, so git over SSH fails with "Permission denied
+    # (publickey)" after every reboot. Pin the agent socket the installer
+    # sees, written relative to the runtime dir (%t) where possible.
+    ssh_env = ""
+    ssh_auth_sock = os.environ.get("SSH_AUTH_SOCK")
+    if ssh_auth_sock:
+        runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
+        if runtime_dir and ssh_auth_sock.startswith(runtime_dir.rstrip("/") + "/"):
+            ssh_auth_sock = "%t" + ssh_auth_sock[len(runtime_dir.rstrip("/")):]
+        ssh_env = f"Environment=SSH_AUTH_SOCK={ssh_auth_sock}\n"
+    else:
+        print("warning: SSH_AUTH_SOCK is not set; git over SSH may fail "
+              "when the service starts before your session", file=sys.stderr)
+
     service_content = textwrap.dedent(f"""\
         [Unit]
         Description=Gitorizer git auto-commit daemon
@@ -143,7 +158,7 @@ elif system == "Linux":
         StandardOutput=journal
         StandardError=journal
         Environment=PYTHONUNBUFFERED=1
-
+        {ssh_env}
         [Install]
         WantedBy=default.target
     """)

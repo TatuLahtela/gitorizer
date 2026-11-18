@@ -134,10 +134,16 @@ Restart=on-failure
 StandardOutput=journal
 StandardError=journal
 Environment=PYTHONUNBUFFERED=1
+Environment=SSH_AUTH_SOCK=%t/ssh-agent.socket
 
 [Install]
 WantedBy=default.target
 ```
+
+Set `SSH_AUTH_SOCK` to your agent's socket (`echo $SSH_AUTH_SOCK`; `%t` is
+`$XDG_RUNTIME_DIR`). The user service usually starts before your desktop
+session exports it, and without it every pull and push over SSH fails with
+`Permission denied (publickey)`.
 
 Then enable and start it:
 
