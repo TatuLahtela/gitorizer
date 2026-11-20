@@ -6,7 +6,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from gitorizer import status
-from gitorizer.tray import build_model, error_text, format_when, tooltip_text
+from gitorizer.tray import (
+    build_model, error_text, failure_keys, format_when, new_failures,
+    notification_text, tooltip_text,
+)
 
 
 class StatusStoreTest(unittest.TestCase):
@@ -97,6 +100,64 @@ class TrayModelTest(unittest.TestCase):
         text = error_text(RepoError("push", "x" * 500, None), datetime.now(timezone.utc))
         self.assertLess(len(text), 130)
         self.assertTrue(text.endswith("…"))
+
+
+def _state(errors: dict[str, dict[str, str]], running: bool = True) -> dict:
+    return {
+        "pid": os.getpid(),
+        "running": running,
+        "repos": {
+            path: {
+                "last_sync": None,
+                "errors": {op: {"message": msg, "time": None} for op, msg in errs.items()},
+            }
+            for path, errs in errors.items()
+        },
+    }
+
+
+class NotificationTest(unittest.TestCase):
+    def test_startup_failures_are_new(self) -> None:
+        model = build_model(_state({"/a": {"pull": "fatal: denied"}}))
+        fresh = new_failures(frozenset(), model)
+        self.assertEqual([(r.label, e.op) for r, e in fresh], [("/a", "pull")])
+
+    def test_repeated_failure_is_reported_once(self) -> None:
+        model = build_model(_state({"/a": {"pull": "fatal: denied"}}))
+        known = failure_keys(model)
+        again = build_model(_state({"/a": {"pull": "fatal: denied again"}}))
+        self.assertEqual(new_failures(known, again), [])
+
+    def test_failure_after_recovery_is_reported_again(self) -> None:
+        failing = build_model(_state({"/a": {"pull": "fatal: denied"}}))
+        recovered = build_model(_state({"/a": {}}))
+        known = failure_keys(recovered)
+        self.assertEqual(len(new_failures(known, failing)), 1)
+
+    def test_only_the_new_op_is_reported(self) -> None:
+        known = failure_keys(build_model(_state({"/a": {"pull": "x"}})))
+        model = build_model(_state({"/a": {"pull": "x", "push": "y"}}))
+        self.assertEqual([e.op for _, e in new_failures(known, model)], ["push"])
+
+    def test_stopped_daemon_does_not_notify(self) -> None:
+        model = build_model(_state({"/a": {"pull": "x"}}, running=False))
+        self.assertEqual(new_failures(frozenset(), model), [])
+
+    def test_notification_text(self) -> None:
+        one = build_model(_state({"/a": {"pull": "fatal: denied"}}))
+        title, body = notification_text(new_failures(frozenset(), one))
+        self.assertEqual(title, "Gitorizer: pull failed in /a")
+        self.assertEqual(body, "fatal: denied")
+
+        same_repo = build_model(_state({"/a": {"pull": "p", "push": "q"}}))
+        title, body = notification_text(new_failures(frozenset(), same_repo))
+        self.assertEqual(title, "Gitorizer: 2 operations failed in /a")
+        self.assertEqual(body, "pull: p\npush: q")
+
+        two_repos = build_model(_state({"/a": {"pull": "p"}, "/b": {"push": "q"}}))
+        title, body = notification_text(new_failures(frozenset(), two_repos))
+        self.assertEqual(title, "Gitorizer: 2 operations failed")
+        self.assertIn("/b: push — q", body)
 
 
 if __name__ == "__main__":

@@ -122,6 +122,11 @@ sync (commit, push, pull, or fetch) and, beneath it, the latest error for each
 failing operation. Click a repository to open its folder, or click an error to
 copy the message. An error clears once the same operation succeeds again.
 
+When an operation starts failing, the tray also shows a desktop notification
+(click it to open the repository folder). An operation that keeps failing is
+reported once, and again only if it fails after having succeeded in between.
+Errors already present when the tray starts are reported too.
+
 The tray needs PySide6, available as the `tray` extra:
 
 ```bash

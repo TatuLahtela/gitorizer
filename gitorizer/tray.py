@@ -19,6 +19,7 @@ from gitorizer.status import default_status_path
 
 POLL_MS = 2000
 MAX_ERROR_CHARS = 100
+NOTIFY_MS = 10000
 
 
 @dataclass(frozen=True)
@@ -136,6 +137,49 @@ def tooltip_text(model: TrayModel) -> str:
     return f"Gitorizer: {len(model.repos)} repositories in sync"
 
 
+FailureKey = tuple[Path, str]
+
+
+def failure_keys(model: TrayModel) -> frozenset[FailureKey]:
+    """The (repo, operation) pairs currently failing."""
+    if not model.daemon_running:
+        return frozenset()
+    return frozenset((r.path, e.op) for r in model.repos for e in r.errors)
+
+
+def new_failures(
+    known: frozenset[FailureKey], model: TrayModel
+) -> list[tuple[RepoEntry, RepoError]]:
+    """Failures present in model but not in known.
+
+    An operation that keeps failing (e.g. a pull retried every minute) stays
+    in known and is reported once; it is reported again only after it has
+    succeeded in between.
+    """
+    current = failure_keys(model)
+    return [
+        (r, e)
+        for r in model.repos
+        for e in r.errors
+        if (r.path, e.op) in current and (r.path, e.op) not in known
+    ]
+
+
+def notification_text(failures: list[tuple[RepoEntry, RepoError]]) -> tuple[str, str]:
+    """Title and body for a desktop notification about new failures."""
+    if len(failures) == 1:
+        repo, err = failures[0]
+        return f"Gitorizer: {err.op} failed in {repo.label}", err.message
+    repos = {repo.label for repo, _ in failures}
+    if len(repos) == 1:
+        title = f"Gitorizer: {len(failures)} operations failed in {repos.pop()}"
+        body = "\n".join(f"{err.op}: {err.message}" for _, err in failures)
+    else:
+        title = f"Gitorizer: {len(failures)} operations failed"
+        body = "\n".join(f"{repo.label}: {err.op} — {err.message}" for repo, err in failures)
+    return title, body
+
+
 def _load_state(path: Path) -> dict | None:
     try:
         return json.loads(path.read_text())
@@ -196,6 +240,11 @@ def _run_tray(status_path: Path) -> int:
     tray.setContextMenu(menu)
 
     last_rendered: list[object] = [None]
+    # Failures already shown as a notification; starts empty so failures that
+    # exist when the tray starts (e.g. right after login) are reported too.
+    notified: list[frozenset[FailureKey]] = [frozenset()]
+    # Folder to open when the last notification is clicked.
+    notified_repo: list[Path | None] = [None]
 
     def open_folder(path: Path) -> None:
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
@@ -203,9 +252,25 @@ def _run_tray(status_path: Path) -> int:
     def copy_text(text: str) -> None:
         QGuiApplication.clipboard().setText(text)
 
+    def notify(model: TrayModel) -> None:
+        fresh = new_failures(notified[0], model)
+        notified[0] = failure_keys(model)
+        if not fresh or not tray.isVisible():
+            return
+        title, body = notification_text(fresh)
+        notified_repo[0] = fresh[0][0].path
+        tray.showMessage(title, body, QSystemTrayIcon.MessageIcon.Critical, NOTIFY_MS)
+
+    def on_message_clicked() -> None:
+        if notified_repo[0] is not None:
+            open_folder(notified_repo[0])
+
+    tray.messageClicked.connect(on_message_clicked)
+
     def render(force: bool = False) -> None:
         model = build_model(_load_state(status_path))
         now = datetime.now(timezone.utc)
+        notify(model)
 
         # Only rebuild the menu when something visible changed; rebuilding
         # an open menu every poll makes it flicker.
@@ -272,8 +337,9 @@ def _run_tray(status_path: Path) -> int:
 
     def show_when_available() -> None:
         if QSystemTrayIcon.isSystemTrayAvailable():
-            render(force=True)
+            # Show first: notifications need a visible tray icon.
             tray.show()
+            render(force=True)
         else:
             QTimer.singleShot(2000, show_when_available)
 
