@@ -60,7 +60,9 @@ python_args = (
     if python_version_file.exists()
     else []
 )
-run([uv, "tool", "install", install_target, *python_args, "--force"])
+# --reinstall: the version rarely changes between local edits, and without it
+# uv reuses its cached build of the old code.
+run([uv, "tool", "install", install_target, *python_args, "--force", "--reinstall"])
 
 bin_path = HOME / ".local" / "bin" / "gitorizer"
 if not bin_path.exists():
@@ -146,7 +148,11 @@ elif system == "Linux":
     service_content = textwrap.dedent(f"""\
         [Unit]
         Description=Gitorizer git auto-commit daemon
-        After=network.target
+        # Start inside the graphical session, after the desktop has imported
+        # SSH_AUTH_SOCK etc. into the systemd user environment. Starting at
+        # default.target (boot/linger) leaves git without an ssh agent.
+        After=network.target graphical-session.target
+        PartOf=graphical-session.target
 
         [Service]
         ExecStart={bin_path}
@@ -156,15 +162,18 @@ elif system == "Linux":
         Environment=PYTHONUNBUFFERED=1
 
         [Install]
-        WantedBy=default.target
+        WantedBy=graphical-session.target
     """)
 
     service_path.write_text(service_content)
     print(f"wrote: {service_path}")
 
     run(["systemctl", "--user", "daemon-reload"])
-    run(["systemctl", "--user", "enable", "--now", "gitorizer"])
-    # enable --now leaves an already-running service on the old binary
+    # reenable drops symlinks from an older [Install] section (e.g. the
+    # previous default.target.wants link) before creating the current ones
+    run(["systemctl", "--user", "reenable", "gitorizer"])
+    # restart (not just start) so an already-running service picks up the
+    # new binary and environment
     run(["systemctl", "--user", "restart", "gitorizer"])
 
     print()

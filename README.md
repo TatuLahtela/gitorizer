@@ -153,7 +153,11 @@ Create `~/.config/systemd/user/gitorizer.service`:
 ```ini
 [Unit]
 Description=Gitorizer git auto-commit daemon
-After=network.target
+# Start inside the graphical session, after the desktop has imported
+# SSH_AUTH_SOCK etc. into the systemd user environment. Starting at
+# default.target (boot/linger) leaves git without an ssh agent.
+After=network.target graphical-session.target
+PartOf=graphical-session.target
 
 [Service]
 ExecStart=%h/.local/bin/gitorizer
@@ -163,7 +167,7 @@ StandardError=journal
 Environment=PYTHONUNBUFFERED=1
 
 [Install]
-WantedBy=default.target
+WantedBy=graphical-session.target
 ```
 
 Then enable and start it:
