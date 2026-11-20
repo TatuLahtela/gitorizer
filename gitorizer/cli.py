@@ -35,9 +35,17 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    # When running under systemd, stderr is captured directly by journald
+    # (no syslog daemon filtering). Skip the timestamp since journald adds it.
+    under_systemd = bool(os.environ.get("INVOCATION_ID") or os.environ.get("JOURNAL_STREAM"))
+    log_format = (
+        "%(levelname)s %(name)s: %(message)s"
+        if under_systemd
+        else "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    )
     logging.basicConfig(
         level=getattr(logging, args.log_level),
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        format=log_format,
         datefmt="%Y-%m-%dT%H:%M:%S",
         stream=sys.stderr,
     )
